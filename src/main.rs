@@ -1,81 +1,84 @@
-use petgraph::dot::{Dot, Config};
-use petgraph::graph::{DiGraph};
-use std::collections::{HashSet, HashMap};
+use petgraph::dot::{Config, Dot};
+use petgraph::graph::{DiGraph, NodeIndex};
+use petgraph::visit::NodeRef;
+use std::fmt;
+use std::fs::write;
+use std::process::Command;
 
-#[derive(Clone, Debug)]
-struct Node {
-    data: f64,
-    _op: Option<String>,
-    _prev: Vec<usize>,
+fn dot_to_svg(dot: &str, output_path: &str) {
+    let dot_file = "graph.dot";
+    write(dot_file, dot).expect("Failed to write DOT file");
+
+    let output = Command::new("dot")
+        .args(&["-Tsvg", dot_file, "-o", output_path])
+        .output()
+        .expect("Failed to execute Graphviz");
+
+    if output.status.success() {
+        println!("SVG generated at {}", output_path);
+    } else {
+        eprintln!("Error: {}", String::from_utf8_lossy(&output.stderr));
+    }
 }
 
-fn trace(root: usize, nodes: &Vec<Node>) -> (HashSet<usize>, Vec<(usize, usize)>) {
-    let mut visited_nodes = HashSet::new();
-    let mut edges = Vec::new();
-
-    fn build(v: usize, nodes: &Vec<Node>, visited: &mut HashSet<usize>, edges: &mut Vec<(usize, usize)>) {
-        if !visited.contains(&v) {
-            visited.insert(v);
-            for &child_idx in &nodes[v]._prev {
-                edges.push((child_idx, v));
-                build(child_idx, nodes, visited, edges);
-            }
-        }
-    }
-
-    build(root, nodes, &mut visited_nodes, &mut edges);
-    (visited_nodes, edges)
+// Define a struct for nodes
+#[derive(Debug, Clone, Copy)]
+struct NodeData {
+    label: &'static str,
+    shape: &'static str, // "rectangle" or "circle"
 }
 
-fn draw_dot(root: usize, nodes: &Vec<Node>) {
-    let (visited_nodes, edges) = trace(root, nodes);
-
-    // Map for storing node IDs to Graphviz IDs
-    let mut node_id_map = HashMap::new();
-    let mut graph = DiGraph::<String, ()>::new();
-
-    for &node_idx in &visited_nodes {
-        let node = &nodes[node_idx];
-        let node_label = format!("{{data {:.4}}}", node.data);
-        let graph_node = graph.add_node(node_label.clone());
-        node_id_map.insert(node_idx, graph_node);
-
-        if let Some(op) = &node._op {
-            let op_node = graph.add_node(op.clone());
-            graph.add_edge(op_node, graph_node, ());
-        }
+impl fmt::Display for NodeData {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "label={}, shape={}", self.label, self.shape)
     }
-
-    for (from, to) in edges {
-        if let Some(&from_id) = node_id_map.get(&from) {
-            if let Some(_) = node_id_map.get(&to) {
-                if let Some(op) = &nodes[to]._op {
-                    let op_node = graph.add_node(op.clone());
-                    graph.add_edge(from_id, op_node, ());
-                }
-            }
-        }
-    }
-
-    // Print the DOT representation
-    println!("{:?}", Dot::with_config(&graph, &[Config::EdgeNoLabel]));
 }
+
 
 fn main() {
-    // Example usage
-    let nodes = vec![
-        Node {
-            data: 1.0,
-            _op: None,
-            _prev: vec![],
-        },
-        Node {
-            data: 3.0,
-            _op: Some("add".to_string()),
-            _prev: vec![0],
-        },
-    ];
+    let mut graph = DiGraph::<NodeData, &str>::new();
 
-    draw_dot(1, &nodes);
+    // Add nodes with proper labels and shapes
+    let a = graph.add_node(NodeData {
+        label: "Start",
+        shape: "rectangle",
+    });
+    let b = graph.add_node(NodeData {
+        label: "Process",
+        shape: "rectangle",
+    });
+    let c = graph.add_node(NodeData {
+        label: "Decision",
+        shape: "circle",
+    });
+    let d = graph.add_node(NodeData {
+        label: "End",
+        shape: "circle",
+    });
+
+    // Add edges
+    graph.add_edge(a, b, "Next");
+    graph.add_edge(b, c, "Check");
+    graph.add_edge(c, d, "Done");
+
+    // Custom attribute getter for nodes
+    let get_node_attrs = |_, node: (NodeIndex, &NodeData)| {
+        format!("label=\"{}\" shape={}", node.1.label, node.1.shape)
+    };
+
+    // Custom attribute getter for edges
+    let get_edge_attrs = |_, _| {
+        String::new() // No extra edge attributes
+    };
+
+    // Generate proper Graphviz DOT format
+    let dot_graph = Dot::with_attr_getters(
+        &graph,
+        &[Config::EdgeNoLabel],
+        &get_edge_attrs,
+        &get_node_attrs,
+    )
+    .to_string();
+    println!("{}", dot_graph);
+    dot_to_svg(&dot_graph, "graph.svg");
 }
-
